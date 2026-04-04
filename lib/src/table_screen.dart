@@ -10,29 +10,57 @@ class TableScreen extends StatefulWidget {
 }
 
 class _TableScreenWithState extends State<TableScreen> {
-  String _text = "99.05";
-  // late double _inputWeight;
-
-  TextEditingController inputController = TextEditingController();
-
-  @override
-  void initState() {
-    inputController = TextEditingController();
-    super.initState();
-  }
+  final _formKey = GlobalKey<FormState>();
+  final _weightInputController = TextEditingController();
+  var weightInput = "start";
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: Center(
-        child: Text(_text),
-        // child: Container(_inputWeight),
+        child: Text(weightInput),
       ),
       // this is the button that will open the AlertDialog where the userinput is handled
       floatingActionButton: FloatingActionButton(
           onPressed: () => _dialogBuilder(context),
           child: const Icon(Icons.add),
       ),
+    );
+  }
+
+  void _submitForm(){
+    // validation is done in _dialogBuilder because otherwise the Dialog would close even if not return null
+    final doubleWeightInput = double.parse(_weightInputController.text.replaceAll(',', '.')); // us this later for database input
+    setState(() {
+      weightInput = doubleWeightInput.toString();
+    });
+      // without setState, you have to write the things, you wanna do with weightInput here!
+  }
+
+  Widget _inputTileWidget(BuildContext context) {
+    return Padding(
+        padding: EdgeInsets.symmetric(horizontal: 10.0, vertical: 20.0),
+        child: Form(
+          key: _formKey,
+          child: TextFormField(
+            controller: _weightInputController,
+            keyboardType: TextInputType.number,
+            decoration: InputDecoration(
+              hintText: 'Enter your weight today',
+              errorMaxLines: 3,
+            ),
+            validator: (value){
+              if (value == null || value.isEmpty) {
+                return "Please enter a weight.";
+              }
+              final doubleValue = double.tryParse(value.replaceAll(',', '.'));
+              if (doubleValue == null){
+                return "Please input a number like '100.00', '98,95' or '80'.";
+              }
+              return null;
+            },
+          ),
+        ),
     );
   }
 
@@ -44,7 +72,7 @@ class _TableScreenWithState extends State<TableScreen> {
           title: const Text("Track your today's weight"),
           actionsAlignment: MainAxisAlignment.center,
           actions: <Widget>[
-            InputTile(controller: inputController),
+            _inputTileWidget(context),
             Row(
               mainAxisSize: MainAxisSize.min,
               children: <Widget>[
@@ -63,10 +91,10 @@ class _TableScreenWithState extends State<TableScreen> {
                   ),
                   child: const Text('Submit'),
                   onPressed: () {
-                    setState(() {
-                      _text = inputController.text;
-                    });
-                    Navigator.pop(context);
+                    if (_formKey.currentState!.validate()){
+                      _submitForm();
+                      Navigator.of(context).pop();
+                    }
                   },
                 ),
               ],
@@ -76,33 +104,5 @@ class _TableScreenWithState extends State<TableScreen> {
       },
     );
   }
+
 }
-
-class InputTile extends StatelessWidget {
-  const InputTile({super.key, required this.controller});
-
-  final TextEditingController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-        padding: EdgeInsets.symmetric(horizontal: 30.0, vertical: 20.0),
-        child: TextField(
-          controller: controller,
-          keyboardType: TextInputType.number,
-          decoration: InputDecoration(
-            hintText: 'Enter your weight today',
-          ),
-        ),
-    );
-  }
-}
-
-// double correctWeightToDouble(String weightInput) {
-//   try {
-//     return double.parse(weightInput.replaceAll(",", "."));
-//   } catch (e) {
-//     print("You didn't input a number. Please input Numbers like '100,00' or '98.95' or '80'!");
-//     exit(1);
-//   }
-// }
