@@ -1,3 +1,8 @@
+# IDE
+.idea/
+*.iml
+.metadata
+
 # ---> Dart
 # See https://www.dartlang.org/guides/libraries/private-files
 

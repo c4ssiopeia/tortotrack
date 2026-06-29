@@ -1,83 +1,85 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'src/app_colors.dart';
-import 'src/table_screen.dart';
-// import 'src/screen_graph.dart';
-// import 'src/screen_settings.dart';
+import 'pages/table_screen.dart';
+import 'pages/graph_screen.dart';
+import 'pages/settings_screen.dart';
+import 'database/database.dart';
 
+// Global notifiers so any widget can read or change app-wide preferences
+// without needing to pass callbacks all the way down the widget tree.
+final themeNotifier = ValueNotifier<ThemeMode>(ThemeMode.light);
+// true = display weights in lbs; false = kg (storage is always kg).
+final useLbsNotifier = ValueNotifier<bool>(false);
 
-List<String> titles = <String>['List', 'Graph', 'Settings'];
-
-
-void main() => runApp(const MainApp());
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  final prefs = await SharedPreferences.getInstance();
+  final isDark = prefs.getBool('darkMode') ?? false;
+  themeNotifier.value = isDark ? ThemeMode.dark : ThemeMode.light;
+  useLbsNotifier.value = prefs.getBool('useLbs') ?? false;
+  await db.seedDummyData();
+  runApp(const MainApp());
+}
 
 class MainApp extends StatelessWidget {
   const MainApp({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      home: const MyAppBar(),
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: themeNotifier,
+      builder: (_, mode, __) => MaterialApp(
+        themeMode: mode,
+        theme: ThemeData(
+          colorScheme: ColorScheme.fromSeed(seedColor: AppColors.oceanBlue),
+          useMaterial3: true,
+        ),
+        darkTheme: ThemeData(
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: AppColors.oceanBlue,
+            brightness: Brightness.dark,
+          ),
+          useMaterial3: true,
+        ),
+        home: const _AppShell(),
+      ),
     );
   }
 }
 
-class MyAppBar extends StatelessWidget {
-  const MyAppBar({super.key});
+class _AppShell extends StatelessWidget {
+  const _AppShell();
 
   @override
   Widget build(BuildContext context) {
-    const int tabsCount = 3;
-
     return DefaultTabController(
-      initialIndex: 1,
-      length: tabsCount,
+      initialIndex: 0,
+      length: 3,
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('This is the weighttrack app.'),
+          title: const Text('tortotrack'),
           backgroundColor: AppColors.oceanBlue,
           foregroundColor: AppColors.background,
-          notificationPredicate: (ScrollNotification notification) {
-            return notification.depth == 1;
-          },
-          // The elevation value of the app bar when scroll view has
-          // scrolled underneath the app bar.
           scrolledUnderElevation: 4.0,
-          // shadowColor: Theme.of(context).shadowColor,
-          bottom: TabBar(
-            tabs: <Widget>[
-              Tab(icon: const Icon(Icons.table_view_outlined, color: AppColors.background)),
-              Tab(icon: const Icon(Icons.show_chart_outlined, color: AppColors.background)),
-              Tab(icon: const Icon(Icons.settings_outlined, color: AppColors.background)),
+          bottom: const TabBar(
+            labelColor: AppColors.background,
+            unselectedLabelColor: AppColors.background,
+            tabs: [
+              Tab(icon: Icon(Icons.table_view_outlined)),
+              Tab(icon: Icon(Icons.show_chart_outlined)),
+              Tab(icon: Icon(Icons.settings_outlined)),
             ],
           ),
         ),
-        body: TabBarView(
-          children: <Widget>[
+        body: const TabBarView(
+          children: [
             TableScreen(),
-            ListView.builder(
-              itemCount: 3,
-              itemBuilder: (BuildContext context, int index) {
-                return ListTile(
-                  // tileColor: index.isOdd ? oddItemColor : evenItemColor,
-                  title: Text('${titles[1]} $index'),
-                );
-              },
-            ),
-            ListView.builder(
-              itemCount: 3,
-              itemBuilder: (BuildContext context, int index) {
-                return ListTile(
-                  // tileColor: index.isOdd ? oddItemColor : evenItemColor,
-                  title: Text('${titles[2]} $index'),
-                );
-              },
-            ),
+            GraphScreen(),
+            SettingsScreen(),
           ],
         ),
       ),
     );
   }
 }
-
-
-
