@@ -1,5 +1,12 @@
 import 'package:intl/intl.dart';
 
+// Plain data class — one row from the weight_entries table.
+class WeightEntry {
+  final String date;      // YYYY-MM-DD
+  final double weightKg;
+  const WeightEntry({required this.date, required this.weightKg});
+}
+
 // Formats a DateTime to the YYYY-MM-DD string used as the database key.
 String dateToString(DateTime date) {
   return DateFormat('yyyy-MM-dd').format(date);

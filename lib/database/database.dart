@@ -1,103 +1,114 @@
-import 'dart:io';
-import 'package:drift/drift.dart';
-import 'package:drift/native.dart';
-import 'package:path_provider/path_provider.dart';
+import 'dart:async';
 import 'package:path/path.dart' as p;
+import 'package:sqflite/sqflite.dart';
 import 'weight_entry.dart';
 
-part 'database.g.dart';
+// Manages the SQLite database via sqflite (uses Android's built-in SQLite —
+// no native library bundling required, no JNI issues at startup).
+class AppDatabase {
+  static Database? _instance;
 
-// Table definition: one row per day, date is the primary key.
-// Weight is always stored in kg; conversion to lbs happens in the UI.
-class WeightEntries extends Table {
-  TextColumn get date => text()(); // YYYY-MM-DD
-  RealColumn get weightKg => real()();
+  // Broadcast stream controller: any mutation calls _notify() so that all
+  // active watch() streams re-query and emit fresh data.
+  static final _changes = StreamController<void>.broadcast();
 
-  @override
-  Set<Column> get primaryKey => {date};
-}
-
-@DriftDatabase(tables: [WeightEntries])
-class AppDatabase extends _$AppDatabase {
-  AppDatabase() : super(_openConnection());
-
-  @override
-  int get schemaVersion => 1;
-
-  static QueryExecutor _openConnection() {
-    return LazyDatabase(() async {
-      final dbFolder = await getApplicationSupportDirectory();
-      final file = File(p.join(dbFolder.path, 'tortotrack.db'));
-      return NativeDatabase.createInBackground(file);
-    });
+  Future<Database> get _db async {
+    _instance ??= await _openDb();
+    return _instance!;
   }
 
-  // All entries for a given month, sorted by date ascending.
-  Future<List<WeightEntry>> getEntriesForMonth(int year, int month) {
-    final prefix =
-        '${year.toString().padLeft(4, '0')}-${month.toString().padLeft(2, '0')}';
-    return (select(weightEntries)
-          ..where((t) => t.date.like('$prefix%'))
-          ..orderBy([(t) => OrderingTerm.asc(t.date)]))
-        .get();
-  }
-
-  // All entries ever recorded, sorted by date ascending.
-  // Used for CSV export and the trend calculation.
-  Future<List<WeightEntry>> getAllEntries() {
-    return (select(weightEntries)
-          ..orderBy([(t) => OrderingTerm.asc(t.date)]))
-        .get();
-  }
-
-  // Single entry for a specific date, or null if none exists.
-  Future<WeightEntry?> getEntryForDate(String date) {
-    return (select(weightEntries)..where((t) => t.date.equals(date)))
-        .getSingleOrNull();
-  }
-
-  // Insert a new entry or update the weight if the date already exists.
-  Future<void> upsertEntry(String date, double weightKg) {
-    return into(weightEntries).insertOnConflictUpdate(
-      WeightEntriesCompanion(
-        date: Value(date),
-        weightKg: Value(weightKg),
-      ),
+  static Future<Database> _openDb() async {
+    final dir = await getDatabasesPath();
+    return openDatabase(
+      p.join(dir, 'tortotrack.db'),
+      version: 1,
+      onCreate: (db, _) => db.execute('''
+        CREATE TABLE weight_entries (
+          date      TEXT PRIMARY KEY,
+          weight_kg REAL NOT NULL
+        )
+      '''),
     );
   }
 
+  void _notify() => _changes.add(null);
+
+  static WeightEntry _row(Map<String, Object?> row) => WeightEntry(
+        date: row['date'] as String,
+        weightKg: (row['weight_kg'] as num).toDouble(),
+      );
+
+  // All entries ever recorded, sorted by date ascending.
+  Future<List<WeightEntry>> getAllEntries() async {
+    final rows = await (await _db).query('weight_entries', orderBy: 'date ASC');
+    return rows.map(_row).toList();
+  }
+
+  // All entries for a given month, sorted by date ascending.
+  Future<List<WeightEntry>> getEntriesForMonth(int year, int month) async {
+    final prefix =
+        '${year.toString().padLeft(4, '0')}-${month.toString().padLeft(2, '0')}';
+    final rows = await (await _db).query(
+      'weight_entries',
+      where: 'date LIKE ?',
+      whereArgs: ['$prefix%'],
+      orderBy: 'date ASC',
+    );
+    return rows.map(_row).toList();
+  }
+
+  // Single entry for a specific date, or null if none exists.
+  Future<WeightEntry?> getEntryForDate(String date) async {
+    final rows = await (await _db).query(
+      'weight_entries',
+      where: 'date = ?',
+      whereArgs: [date],
+    );
+    return rows.isEmpty ? null : _row(rows.first);
+  }
+
+  // Insert a new entry or replace the weight if the date already exists.
+  Future<void> upsertEntry(String date, double weightKg) async {
+    await (await _db).insert(
+      'weight_entries',
+      {'date': date, 'weight_kg': weightKg},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+    _notify();
+  }
+
   // Permanently delete the entry for a specific date.
-  Future<void> deleteEntry(String date) {
-    return (delete(weightEntries)..where((t) => t.date.equals(date))).go();
+  Future<void> deleteEntry(String date) async {
+    await (await _db)
+        .delete('weight_entries', where: 'date = ?', whereArgs: [date]);
+    _notify();
   }
 
   // Permanently delete every entry. Used in Settings.
-  Future<void> deleteAllEntries() {
-    return delete(weightEntries).go();
+  Future<void> deleteAllEntries() async {
+    await (await _db).delete('weight_entries');
+    _notify();
   }
 
-  // Live stream of all entries sorted ascending — emits whenever the table changes.
-  Stream<List<WeightEntry>> watchAllEntries() {
-    return (select(weightEntries)
-          ..orderBy([(t) => OrderingTerm.asc(t.date)]))
-        .watch();
+  // Live stream of all entries — emits immediately, then again on every change.
+  Stream<List<WeightEntry>> watchAllEntries() async* {
+    yield await getAllEntries();
+    await for (final _ in _changes.stream) {
+      yield await getAllEntries();
+    }
   }
 
-  // Live stream of entries for a given month, sorted ascending.
-  Stream<List<WeightEntry>> watchEntriesForMonth(int year, int month) {
-    final prefix =
-        '${year.toString().padLeft(4, '0')}-${month.toString().padLeft(2, '0')}';
-    return (select(weightEntries)
-          ..where((t) => t.date.like('$prefix%'))
-          ..orderBy([(t) => OrderingTerm.asc(t.date)]))
-        .watch();
+  // Live stream of entries for a given month — same pattern as watchAllEntries.
+  Stream<List<WeightEntry>> watchEntriesForMonth(int year, int month) async* {
+    yield await getEntriesForMonth(year, month);
+    await for (final _ in _changes.stream) {
+      yield await getEntriesForMonth(year, month);
+    }
   }
 
   // Seeds 10 days of dummy data, only if the database is currently empty.
   Future<void> seedDummyData() async {
-    final existing = await getAllEntries();
-    if (existing.isNotEmpty) return;
-
+    if ((await getAllEntries()).isNotEmpty) return;
     final weights = [78.4, 78.1, 78.6, 77.9, 78.3, 77.7, 77.5, 77.8, 77.2, 77.0];
     final today = DateTime.now();
     for (int i = 9; i >= 0; i--) {

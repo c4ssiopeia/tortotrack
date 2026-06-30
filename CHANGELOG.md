@@ -5,6 +5,20 @@ Versioning follows [Semantic Versioning](https://semver.org/): MAJOR.MINOR.PATCH
 
 ---
 
+## [0.3.1] - 2026-06-30
+
+### Fixed
+- **Replaced Drift + sqlite3_flutter_libs with sqflite** — the previous setup bundled a compiled native SQLite `.so` library which crashed on startup on some Android devices before any Dart code ran (and therefore couldn't be caught or displayed). The app now uses Android's own built-in SQLite via `sqflite`, which is battle-tested on billions of devices and requires no native library bundling.
+- **Pinned `shared_preferences_android` to `<2.4.0`** — version 2.4.x switched to AndroidX DataStore as its storage backend, which bundles `libdatastore_shared_counter.so`. This third-party native library was causing startup crashes on some devices. The 2.3.4 version uses the plain Android SharedPreferences API with no native code.
+- **Pinned `path_provider_android` to `<2.3.0`** — version 2.3.x pulls in the experimental `jni` Dart package which crashes at native startup on some devices.
+- **Changed Android `applicationId` from `com.example.tortotrack` to `app.tortotrack`** — the `com.example.*` namespace is a reserved development prefix that OEM Android security layers (MIUI on Xiaomi, Samsung Knox, etc.) silently kill at launch with no error message. This was the root cause of the "app installs but immediately crashes with no error screen" behavior.
+- The APK now contains **only** `libflutter.so` and `libapp.so` — no third-party bundled native libraries whatsoever.
+- Dropped 37 transitive Dart packages (Drift, drift_dev, build_runner, analyzer, …); the dependency tree is now much simpler.
+- Added one-shot silent database migration: on first launch after this update, the database file is automatically moved from the old location (`getApplicationSupportDirectory`) to the new sqflite path (`getDatabasesPath`), preserving any existing data.
+- Crash screen now ensures Flutter bindings are initialised before calling `runApp`, preventing a secondary crash if the error happened very early in startup.
+
+---
+
 ## [0.3.0] - 2026-06-30
 
 ### Added

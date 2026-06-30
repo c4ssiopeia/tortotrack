@@ -1,7 +1,7 @@
 name: tortotrack
 description: "Weight tracking app with Hacker's Diet trend line."
 publish_to: 'none'
-version: 0.1.0+1
+version: 0.1.3+4
 
 environment:
   sdk: ^3.11.1
@@ -13,9 +13,7 @@ dependencies:
   intl: ^0.20.2
 
   # Database
-  drift: ^2.0.0
-  sqlite3: ^2.0.0
-  sqlite3_flutter_libs: ^0.5.0
+  sqflite: ^2.0.0
   path_provider: ^2.0.0
   path: ^1.8.0
 
@@ -25,17 +23,22 @@ dependencies:
   # Chart
   fl_chart: ^0.70.0
 
-  # Export
-  file_picker: ^8.0.0
-  pdf: ^3.10.0
-  printing: ^5.12.0
+  # Export (file_picker, pdf, printing will be added back when the CSV/PDF import features are implemented)
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
-  drift_dev: ^2.0.0
-  build_runner: ^2.4.0
+
+# path_provider_android 2.3.x pulls in the experimental `jni` Dart package
+# which crashes on some Android devices at native startup.
+#
+# shared_preferences_android 2.4.x switched to AndroidX DataStore which bundles
+# libdatastore_shared_counter.so — a native library that crashes on some devices.
+# 2.3.4 is the last version without DataStore and satisfies shared_preferences ^2.3.4.
+dependency_overrides:
+  path_provider_android: ">=2.2.0 <2.3.0"
+  shared_preferences_android: ">=2.3.4 <2.4.0"
 
 flutter:
   uses-material-design: true

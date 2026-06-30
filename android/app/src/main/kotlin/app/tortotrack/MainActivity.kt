@@ -1,4 +1,4 @@
-package com.example.weighttracker_app
+package app.tortotrack
 
 import io.flutter.embedding.android.FlutterActivity
 
