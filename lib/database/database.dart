@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 import 'weight_entry.dart';
 
@@ -18,9 +20,19 @@ class AppDatabase {
   }
 
   static Future<Database> _openDb() async {
-    final dir = await getDatabasesPath();
+    // On Android/iOS, sqflite's getDatabasesPath() is the standard location.
+    // On desktop (Linux/Windows/macOS) we use getApplicationSupportDirectory()
+    // because getDatabasesPath() returns an unstable path when running via FFI.
+    final String dbPath;
+    if (Platform.isAndroid || Platform.isIOS) {
+      dbPath = p.join(await getDatabasesPath(), 'tortotrack.db');
+    } else {
+      final dir = await getApplicationSupportDirectory();
+      await Directory(dir.path).create(recursive: true);
+      dbPath = p.join(dir.path, 'tortotrack.db');
+    }
     return openDatabase(
-      p.join(dir, 'tortotrack.db'),
+      dbPath,
       version: 1,
       onCreate: (db, _) => db.execute('''
         CREATE TABLE weight_entries (

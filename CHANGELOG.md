@@ -5,6 +5,68 @@ Versioning follows [Semantic Versioning](https://semver.org/): MAJOR.MINOR.PATCH
 
 ---
 
+## [Planned]
+
+- **OWASP injection testing** — audit all user-facing inputs (weight entry, CSV
+  import, date fields) against OWASP injection categories: SQL injection, path
+  traversal, and malformed input edge cases. Fix any gaps found.
+- **Delete by date range** — UI for removing entries within a selected date range.
+- **PDF export** — monthly summary as a shareable PDF.
+
+---
+
+## [0.5.0] - 2026-07-01
+
+### Added
+- **Table: interpolated estimates** — empty days that fall inside a short gap
+  between two real entries now show `~X.X kg` (italic) in the table row
+  trailing area. This is the same linearly interpolated weight value the EMA
+  engine uses internally; no new calculation, just surfaced for visibility.
+  Tapping the row still opens the add-weight dialog as before.
+- **Theme: Light / Dark / System picker** in Settings, replacing the old
+  dark-mode switch. System is the new default on first install. Existing users
+  who had dark mode set are migrated automatically; everyone else lands on System.
+- **Goal: Lose / Maintain / Gain** selector in Settings. Colors the trend value
+  in the table and the vertical drop-lines in the graph to show whether the
+  trend is moving in the right direction: green = good, red = bad, amber = moving
+  but Maintain goal active. The measured weight values are never colored.
+
+### Changed
+- `calculateTrendWithEstimates` is the new primary EMA function, returning a
+  Dart 3 record `({trend, estimates})`. `calculateTrend` is now a thin wrapper
+  that delegates to it — all callers continue to work unchanged.
+
+---
+
+## [0.4.1] - 2026-07-01
+
+### Fixed
+- **EMA restart broken by DST** — `calculateTrend` now parses date strings as UTC internally for gap arithmetic. The dates stored in the database are pure calendar labels (YYYY-MM-DD) with no time or timezone. Parsing them as local midnight meant that on the day clocks spring forward (e.g. last Sunday of March in Europe), a gap of 8 calendar days measured only 7 h 23 h in local wall time, so `inDays` returned 7 instead of 8 and the restart never triggered. Using UTC makes the calendar-day count exact for every timezone and DST rule worldwide.
+
+### Changed
+- Clarified `calculateTrend` comment: a gap > 7 days resets the EMA to the new measured weight (same as the first-ever entry), so the orange trend line starts at exactly the blue dot's value after a long break.
+
+### Tests
+- Added test: gap spanning the 2024 European DST spring-forward (2024-03-31 → 2024-04-08, 8 calendar days) must trigger a restart.
+- Added test: gap longer than `maxGapDays` restarts the trend at the measured weight; gap days are absent from the result map.
+
+---
+
+## [0.4.0] - 2026-07-01
+
+### Added
+- **CSV Import** — tap "Import from CSV" in Settings to load a file via a native file chooser dialog. The format is detected automatically: tortotrack's own simple format (`date,weight_kg`) and the **Fourmilab Hacker's Diet** export format are both supported. Days with no measurement in the Fourmilab format are silently skipped. Fourmilab files that track weight in pounds are converted to kg on import.
+- **Fourmilab export format** — the Settings screen now shows a segmented toggle ("Simple" / "Fourmilab") that selects the export format. The Fourmilab export reproduces the full monthly-block structure with `Epoch`, `User`, `Preferences`, `Diet-Plan` headers and correct `StartTrend` EMA values so the file can be re-imported into the Hacker's Diet online tool.
+- **Linux desktop build** — added `sqflite_common_ffi` so SQLite works on Linux via the system `libsqlite3` (no bundled native library). Database stored in `~/.local/share/tortotrack/`. Linux binary renamed from `weighttracker_app` to `tortotrack`.
+- **Anforderungskatalog** folder added to the repo (`Anforderungskatalog/`) containing the Fourmilab reference export (`hackdiet_db.csv`) and the UI wireframe sketch (`sketch-weighttracking.png`).
+
+### Changed
+- `SettingsScreen` converted from `StatelessWidget` to `StatefulWidget` to hold the export format preference (persisted in `shared_preferences`).
+- Export filename now includes a format tag: `tortotrack_simple_YYYYMMDD_HHmmss.csv` or `tortotrack_fourmilab_YYYYMMDD_HHmmss.csv`.
+- CSV import/export logic extracted to `lib/src/csv_io.dart` to keep the settings screen clean.
+
+---
+
 ## [0.3.1] - 2026-06-30
 
 ### Fixed

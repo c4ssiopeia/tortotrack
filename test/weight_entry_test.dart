@@ -81,6 +81,55 @@ void main() {
         '2026-01-02': 79.0,
       });
     });
+
+    test('gap spanning a DST spring-forward day still counts calendar days correctly', () {
+      // In Europe, clocks spring forward on the last Sunday of March.
+      // 2024-03-31 is that day — it has only 23 hours in local time.
+      // DateTime.difference() on local dates would return 7 days + 23 h,
+      // which truncates to 7 (not 8), so showGap would be false and the EMA
+      // would continue instead of restarting. Parsing as UTC avoids this.
+      // 2024-03-31 → 2024-04-08 is 8 calendar days → must restart.
+      final result = calculateTrend({
+        '2024-03-31': 87.0,
+        '2024-04-08': 89.0,
+        '2024-04-09': 88.5,
+      });
+      // April 8 must equal the measured weight (restart), not an EMA carry-over.
+      expect(result['2024-04-08'], closeTo(89.0, 1e-9),
+          reason: 'EMA must restart at the new weight after an 8-day gap');
+      // April 9 continues EMA from the restart value.
+      // T = 89.0 + 0.1*(88.5 - 89.0) = 88.95
+      expect(result['2024-04-09'], closeTo(88.95, 1e-9));
+      // Gap days must not appear.
+      for (int d = 1; d <= 7; d++) {
+        expect(result.containsKey('2024-04-${d.toString().padLeft(2, '0')}'), false);
+      }
+    });
+
+    test('gap longer than maxGapDays restarts trend at the new weight', () {
+      // A 9-day gap (> 7) triggers a full restart: the trend at Jan10 resets
+      // to the measured weight, exactly like the very first entry. The gap
+      // days (Jan02–Jan09) are absent from the result. EMA then continues
+      // normally from the restart value.
+      // T_Jan01 = 80.0  (seed)
+      // T_Jan10 = 79.0  (restart — equals the measured weight)
+      // T_Jan11 = 79.0 + 0.1*(78.5 - 79.0) = 78.95
+      final result = calculateTrend({
+        '2026-01-01': 80.0,
+        '2026-01-10': 79.0,
+        '2026-01-11': 78.5,
+      });
+      expectTrend(result, {
+        '2026-01-01': 80.0,
+        '2026-01-10': 79.0,
+        '2026-01-11': 78.95,
+      });
+      // Gap days must not appear in the result.
+      for (int d = 2; d <= 9; d++) {
+        final key = '2026-01-${d.toString().padLeft(2, '0')}';
+        expect(result.containsKey(key), false, reason: '$key should be absent');
+      }
+    });
   });
 
   group('dateToString', () {

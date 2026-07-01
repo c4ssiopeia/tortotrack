@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:path/path.dart' as p;
@@ -6,33 +7,129 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../main.dart';
 import '../database/database.dart';
+import '../src/csv_io.dart';
 
-class SettingsScreen extends StatelessWidget {
+enum _ExportFormat { simple, fourmilab }
+
+class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
+
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  _ExportFormat _exportFormat = _ExportFormat.simple;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPrefs();
+  }
+
+  Future<void> _loadPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getString('exportFormat');
+    if (saved == 'fourmilab') {
+      setState(() => _exportFormat = _ExportFormat.fourmilab);
+    }
+  }
+
+  Future<void> _setExportFormat(_ExportFormat fmt) async {
+    setState(() => _exportFormat = fmt);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('exportFormat', fmt.name);
+  }
+
+  Future<void> _setTheme(ThemeMode mode) async {
+    themeNotifier.value = mode;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+        'theme',
+        mode == ThemeMode.light
+            ? 'light'
+            : mode == ThemeMode.dark
+                ? 'dark'
+                : 'system');
+  }
+
+  Future<void> _setGoal(WeightGoal goal) async {
+    goalNotifier.value = goal;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('goal', goal.name);
+  }
 
   @override
   Widget build(BuildContext context) {
     return ListView(
       children: [
+        _SectionHeader('Goal'),
+        ValueListenableBuilder<WeightGoal>(
+          valueListenable: goalNotifier,
+          builder: (_, goal, _) => Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: SizedBox(
+              width: double.infinity,
+              child: SegmentedButton<WeightGoal>(
+                showSelectedIcon: false,
+                segments: const [
+                  ButtonSegment(
+                    value: WeightGoal.lose,
+                    label: Text('Lose'),
+                  ),
+                  ButtonSegment(
+                    value: WeightGoal.maintain,
+                    label: Text('Maintain'),
+                  ),
+                  ButtonSegment(
+                    value: WeightGoal.gain,
+                    label: Text('Gain'),
+                  ),
+                ],
+                selected: {goal},
+                onSelectionChanged: (s) => _setGoal(s.first),
+              ),
+            ),
+          ),
+        ),
+        const Divider(),
         _SectionHeader('Appearance'),
         ValueListenableBuilder<ThemeMode>(
           valueListenable: themeNotifier,
-          builder: (_, mode, __) => SwitchListTile(
-            title: const Text('Dark mode'),
-            value: mode == ThemeMode.dark,
-            onChanged: (value) async {
-              themeNotifier.value =
-                  value ? ThemeMode.dark : ThemeMode.light;
-              final prefs = await SharedPreferences.getInstance();
-              await prefs.setBool('darkMode', value);
-            },
+          builder: (_, mode, _) => Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: SizedBox(
+              width: double.infinity,
+              child: SegmentedButton<ThemeMode>(
+                showSelectedIcon: false,
+                segments: const [
+                  ButtonSegment(
+                    value: ThemeMode.light,
+                    label: Text('Light'),
+                    icon: Icon(Icons.light_mode_outlined),
+                  ),
+                  ButtonSegment(
+                    value: ThemeMode.dark,
+                    label: Text('Dark'),
+                    icon: Icon(Icons.dark_mode_outlined),
+                  ),
+                  ButtonSegment(
+                    value: ThemeMode.system,
+                    label: Text('System'),
+                    icon: Icon(Icons.brightness_auto_outlined),
+                  ),
+                ],
+                selected: {mode},
+                onSelectionChanged: (s) => _setTheme(s.first),
+              ),
+            ),
           ),
         ),
         const Divider(),
         _SectionHeader('Units'),
         ValueListenableBuilder<bool>(
           valueListenable: useLbsNotifier,
-          builder: (_, useLbs, __) => SwitchListTile(
+          builder: (_, useLbs, _) => SwitchListTile(
             title: const Text('Display in pounds (lbs)'),
             subtitle: const Text('Weight is always stored in kg'),
             value: useLbs,
@@ -45,17 +142,47 @@ class SettingsScreen extends StatelessWidget {
         ),
         const Divider(),
         _SectionHeader('Export & Import'),
+        // Export format toggle
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+          child: Row(
+            children: [
+              const Text('Export format:'),
+              const SizedBox(width: 16),
+              SegmentedButton<_ExportFormat>(
+                segments: const [
+                  ButtonSegment(
+                    value: _ExportFormat.simple,
+                    label: Text('Simple'),
+                    icon: Icon(Icons.list_outlined),
+                  ),
+                  ButtonSegment(
+                    value: _ExportFormat.fourmilab,
+                    label: Text('Fourmilab'),
+                    icon: Icon(Icons.science_outlined),
+                  ),
+                ],
+                selected: {_exportFormat},
+                onSelectionChanged: (s) => _setExportFormat(s.first),
+              ),
+            ],
+          ),
+        ),
         ListTile(
           leading: const Icon(Icons.table_chart_outlined),
           title: const Text('Export as CSV'),
-          subtitle: const Text('Saves all entries to your Documents folder'),
+          subtitle: Text(
+            _exportFormat == _ExportFormat.simple
+                ? 'Simple format — date, weight in kg'
+                : 'Fourmilab Hacker\'s Diet format',
+          ),
           onTap: () => _exportCsv(context),
         ),
         ListTile(
           leading: const Icon(Icons.upload_file_outlined),
           title: const Text('Import from CSV'),
-          subtitle: const Text('Coming soon'),
-          enabled: false,
+          subtitle: const Text('Auto-detects simple or Fourmilab format'),
+          onTap: () => _importCsv(context),
         ),
         ListTile(
           leading: const Icon(Icons.picture_as_pdf_outlined),
@@ -95,21 +222,56 @@ class SettingsScreen extends StatelessWidget {
       return;
     }
 
-    final buffer = StringBuffer('date,weight_kg\n');
-    for (final e in entries) {
-      buffer.writeln('${e.date},${e.weightKg}');
-    }
+    final csv = _exportFormat == _ExportFormat.simple
+        ? buildSimpleCsv(entries)
+        : buildFourmilabCsv(entries);
 
+    final formatTag = _exportFormat == _ExportFormat.simple ? 'simple' : 'fourmilab';
     final dir = await getApplicationDocumentsDirectory();
     final timestamp = DateFormat('yyyyMMdd_HHmmss').format(DateTime.now());
-    final file = File(p.join(dir.path, 'tortotrack_$timestamp.csv'));
-    await file.writeAsString(buffer.toString());
+    final file = File(p.join(dir.path, 'tortotrack_${formatTag}_$timestamp.csv'));
+    await file.writeAsString(csv);
 
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Saved to ${file.path}'),
           duration: const Duration(seconds: 6),
+        ),
+      );
+    }
+  }
+
+  Future<void> _importCsv(BuildContext context) async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['csv'],
+      dialogTitle: 'Import weight data (simple or Fourmilab format)',
+    );
+
+    if (result == null || result.files.single.path == null) return;
+
+    final content = await File(result.files.single.path!).readAsString();
+    final entries = parseCsv(content);
+
+    if (entries.isEmpty) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No valid entries found in the file.')),
+        );
+      }
+      return;
+    }
+
+    for (final e in entries) {
+      await db.upsertEntry(e.date, e.weightKg);
+    }
+
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Imported ${entries.length} entries.'),
+          duration: const Duration(seconds: 4),
         ),
       );
     }

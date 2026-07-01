@@ -23,49 +23,52 @@ class TableScreen extends StatefulWidget {
 }
 
 class _TableScreenState extends State<TableScreen> {
-  late DateTime _currentMonth;
   final _formKey = GlobalKey<FormState>();
   final _weightController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
-    final now = DateTime.now();
-    _currentMonth = DateTime(now.year, now.month);
+    monthNotifier.addListener(_onMonthChanged);
   }
 
   @override
   void dispose() {
+    monthNotifier.removeListener(_onMonthChanged);
     _weightController.dispose();
     super.dispose();
   }
 
+  void _onMonthChanged() => setState(() {});
+
   bool get _isCurrentMonth {
     final now = DateTime.now();
-    return _currentMonth.year == now.year && _currentMonth.month == now.month;
+    return monthNotifier.value.year == now.year &&
+        monthNotifier.value.month == now.month;
   }
 
   void _prevMonth() {
-    setState(() {
-      _currentMonth = DateTime(_currentMonth.year, _currentMonth.month - 1);
-    });
+    final m = monthNotifier.value;
+    monthNotifier.value = DateTime(m.year, m.month - 1);
   }
 
   void _nextMonth() {
     if (!_isCurrentMonth) {
-      setState(() {
-        _currentMonth = DateTime(_currentMonth.year, _currentMonth.month + 1);
-      });
+      final m = monthNotifier.value;
+      monthNotifier.value = DateTime(m.year, m.month + 1);
     }
   }
 
-  List<DateTime> _daysInMonth() {
-    final lastDay =
-        DateTime(_currentMonth.year, _currentMonth.month + 1, 0).day;
-    return List.generate(
-      lastDay,
-      (i) => DateTime(_currentMonth.year, _currentMonth.month, i + 1),
-    );
+  // Returns all days of the current month up to and including today.
+  // Future dates are excluded so today always sits at the top of the list.
+  List<DateTime> _visibleDays() {
+    final m = monthNotifier.value;
+    final today = DateTime.now();
+    final todayDate = DateTime(today.year, today.month, today.day);
+    final lastDay = DateTime(m.year, m.month + 1, 0).day;
+    return List.generate(lastDay, (i) => DateTime(m.year, m.month, i + 1))
+        .where((d) => !d.isAfter(todayDate))
+        .toList();
   }
 
   Widget _weightField(bool useLbs) {
@@ -144,13 +147,17 @@ class _TableScreenState extends State<TableScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<bool>(
-      valueListenable: useLbsNotifier,
-      builder: (context, useLbs, _) => _buildBody(context, useLbs),
+    return ValueListenableBuilder<WeightGoal>(
+      valueListenable: goalNotifier,
+      builder: (context, goal, _) => ValueListenableBuilder<bool>(
+        valueListenable: useLbsNotifier,
+        builder: (context, useLbs, _) => _buildBody(context, useLbs, goal),
+      ),
     );
   }
 
-  Widget _buildBody(BuildContext context, bool useLbs) {
+  Widget _buildBody(BuildContext context, bool useLbs, WeightGoal goal) {
+    final current = monthNotifier.value;
     return Scaffold(
       floatingActionButton: FloatingActionButton(
         onPressed: () async {
@@ -163,9 +170,14 @@ class _TableScreenState extends State<TableScreen> {
       body: Column(
         children: [
           MonthHeader(
-            month: _currentMonth,
+            month: current,
             onPrev: _prevMonth,
             onNext: _isCurrentMonth ? null : _nextMonth,
+            onTap: () => showMonthYearPicker(
+              context,
+              current,
+              (dt) => monthNotifier.value = dt,
+            ),
           ),
           const Divider(height: 1),
           Expanded(
@@ -177,13 +189,15 @@ class _TableScreenState extends State<TableScreen> {
                 }
                 final allEntries = snapshot.data ?? [];
                 final allMap = {for (final e in allEntries) e.date: e.weightKg};
-                final trendMap = calculateTrend(allMap);
-                final prefix = DateFormat('yyyy-MM').format(_currentMonth);
+                final (:trend, :estimates) =
+                    calculateTrendWithEstimates(allMap);
+                final trendMap = trend;
+                final prefix = DateFormat('yyyy-MM').format(current);
                 final entryMap = {
                   for (final e in allEntries)
                     if (e.date.startsWith(prefix)) e.date: e.weightKg,
                 };
-                final days = _daysInMonth().reversed.toList();
+                final days = _visibleDays().reversed.toList();
                 return ListView.separated(
                   padding: const EdgeInsets.only(bottom: 88),
                   itemCount: days.length,
@@ -203,9 +217,20 @@ class _TableScreenState extends State<TableScreen> {
                         : null;
 
                     final trendKg = trendMap[dateStr];
-                    final trendColor = isDark ? Colors.orange[300]! : Colors.deepOrange;
+                    final prevDateStr =
+                        dateToString(day.subtract(const Duration(days: 1)));
+                    final prevTrendKg = trendMap[prevDateStr];
+                    final trendColor = isDark
+                        ? Colors.orange[300]!
+                        : Colors.deepOrange;
 
                     if (weight != null) {
+                      final trendDisplayColor = goalColor(
+                        currentTrend: trendKg,
+                        previousTrend: prevTrendKg,
+                        goal: goal,
+                        isDark: isDark,
+                      );
                       return Dismissible(
                         key: ValueKey(dateStr),
                         direction: DismissDirection.endToStart,
@@ -243,7 +268,7 @@ class _TableScreenState extends State<TableScreen> {
                                 Text(
                                   'trend ${_formatWeight(trendKg, useLbs)}',
                                   style: TextStyle(
-                                    color: trendColor,
+                                    color: trendDisplayColor,
                                     fontSize: 12,
                                   ),
                                 ),
@@ -259,16 +284,34 @@ class _TableScreenState extends State<TableScreen> {
                       );
                     }
 
-                    // Empty day — tappable only if not in the future.
+                    // Empty day — show an interpolated estimate in the title
+                    // row when one exists, alongside the + icon so the user
+                    // knows they can still add a real weight.
+                    final estimateKg = estimates[dateStr];
                     return ListTile(
                       tileColor: weekendColor,
-                      title: Text(
-                        label,
-                        style: TextStyle(
-                          color: isFuture
-                              ? Theme.of(context).disabledColor
-                              : null,
-                        ),
+                      title: Row(
+                        children: [
+                          Text(
+                            label,
+                            style: TextStyle(
+                              color: isFuture
+                                  ? Theme.of(context).disabledColor
+                                  : null,
+                            ),
+                          ),
+                          if (estimateKg != null && !isFuture) ...[
+                            const Spacer(),
+                            Text(
+                              '~${_formatWeight(estimateKg, useLbs)}',
+                              style: TextStyle(
+                                color: trendColor,
+                                fontSize: 12,
+                                fontStyle: FontStyle.italic,
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
                       trailing: isFuture
                           ? null

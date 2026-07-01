@@ -3,6 +3,16 @@
 *.iml
 .metadata
 
+# Release artifacts — keep outside the repo
+*.apk
+*.tar.gz
+
+# Claude Code session files
+.claude/
+
+# Screenshots / requirement assets
+requirements/
+
 # ---> Dart
 # See https://www.dartlang.org/guides/libraries/private-files
 

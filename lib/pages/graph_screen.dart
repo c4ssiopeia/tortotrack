@@ -14,27 +14,35 @@ class GraphScreen extends StatefulWidget {
 }
 
 class _GraphScreenState extends State<GraphScreen> {
-  late DateTime _currentMonth;
-
   @override
   void initState() {
     super.initState();
-    final now = DateTime.now();
-    _currentMonth = DateTime(now.year, now.month);
+    monthNotifier.addListener(_onMonthChanged);
   }
+
+  @override
+  void dispose() {
+    monthNotifier.removeListener(_onMonthChanged);
+    super.dispose();
+  }
+
+  void _onMonthChanged() => setState(() {});
 
   bool get _isCurrentMonth {
     final now = DateTime.now();
-    return _currentMonth.year == now.year && _currentMonth.month == now.month;
+    return monthNotifier.value.year == now.year &&
+        monthNotifier.value.month == now.month;
   }
 
-  void _prevMonth() => setState(
-      () => _currentMonth = DateTime(_currentMonth.year, _currentMonth.month - 1));
+  void _prevMonth() {
+    final m = monthNotifier.value;
+    monthNotifier.value = DateTime(m.year, m.month - 1);
+  }
 
   void _nextMonth() {
     if (!_isCurrentMonth) {
-      setState(() =>
-          _currentMonth = DateTime(_currentMonth.year, _currentMonth.month + 1));
+      final m = monthNotifier.value;
+      monthNotifier.value = DateTime(m.year, m.month + 1);
     }
   }
 
@@ -44,19 +52,22 @@ class _GraphScreenState extends State<GraphScreen> {
     final weightColor = isDark ? Colors.blue[300]! : Colors.blue[700]!;
     final trendColor = isDark ? Colors.orange[300]! : Colors.deepOrange;
 
-    return ValueListenableBuilder<bool>(
-      valueListenable: useLbsNotifier,
-      builder: (context, useLbs, _) => StreamBuilder<List<WeightEntry>>(
+    return ValueListenableBuilder<WeightGoal>(
+      valueListenable: goalNotifier,
+      builder: (context, goal, _) => ValueListenableBuilder<bool>(
+        valueListenable: useLbsNotifier,
+        builder: (context, useLbs, _) => StreamBuilder<List<WeightEntry>>(
         stream: db.watchAllEntries(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
           }
 
+          final current = monthNotifier.value;
           final allEntries = snapshot.data ?? [];
           final allMap = {for (final e in allEntries) e.date: e.weightKg};
           final trendMap = calculateTrend(allMap);
-          final prefix = DateFormat('yyyy-MM').format(_currentMonth);
+          final prefix = DateFormat('yyyy-MM').format(current);
           final unit = useLbs ? 'lbs' : 'kg';
 
           final weightSpots = allEntries
@@ -68,30 +79,99 @@ class _GraphScreenState extends State<GraphScreen> {
               .toList()
             ..sort((a, b) => a.x.compareTo(b.x));
 
-          final trendSpots = trendMap.entries
-              .where((e) => e.key.startsWith(prefix))
-              .map((e) => FlSpot(
-                    DateTime.parse(e.key).day.toDouble(),
-                    _convert(e.value, useLbs),
+          // Split the trend into continuous segments. Each gap (day missing from
+          // trendMap) ends the current segment. Segments with only 1 point are
+          // dropped — a single isolated dot at the restart position is redundant
+          // with the blue weight dot and causes bezier artefacts in fl_chart.
+          final lastDay = DateTime(current.year, current.month + 1, 0).day;
+          // Build segments from real entry days only. Virtual gap days contribute
+          // to the EMA calculation but are not rendered — the line visits only
+          // days where the user actually recorded a weight. A missing trendMap
+          // value (long gap / restart) ends the segment; a virtual day is
+          // silently skipped without breaking the segment.
+          final trendSegments = <List<FlSpot>>[];
+          List<FlSpot>? seg;
+          for (int day = 1; day <= lastDay; day++) {
+            final dateStr = DateFormat('yyyy-MM-dd')
+                .format(DateTime(current.year, current.month, day));
+            final val = trendMap[dateStr];
+            final isReal = allMap.containsKey(dateStr);
+            if (val == null) {
+              if (seg != null) {
+                if (seg.length >= 2) trendSegments.add(seg);
+                seg = null;
+              }
+            } else if (isReal) {
+              seg ??= [];
+              seg.add(FlSpot(day.toDouble(), _convert(val, useLbs)));
+            }
+            // Virtual interpolated day: skip (don't add, don't break).
+          }
+          if (seg != null && seg.length >= 2) trendSegments.add(seg);
+
+          final trendBars = trendSegments
+              .map((spots) => LineChartBarData(
+                    spots: spots,
+                    isCurved: true,
+                    curveSmoothness: 0.25,
+                    color: trendColor,
+                    barWidth: 2.5,
+                    dotData: const FlDotData(show: false),
+                    belowBarData: BarAreaData(show: false),
                   ))
-              .toList()
-            ..sort((a, b) => a.x.compareTo(b.x));
+              .toList();
+          final numTrendBars = trendBars.length;
+
+          // Build day→trendY lookup from all segments for drop lines.
+          final trendByDay = <double, double>{
+            for (final s in trendSegments.expand((s) => s)) s.x: s.y,
+          };
+          final dropLineBars = <LineChartBarData>[];
+          for (final ws in weightSpots) {
+            final trendY = trendByDay[ws.x];
+            if (trendY == null) continue;
+            // Skip zero-length drop lines (trend == weight at EMA restart point).
+            if ((trendY - ws.y).abs() < 0.01) continue;
+            final dayDate =
+                DateTime(current.year, current.month, ws.x.toInt());
+            final todayStr =
+                DateFormat('yyyy-MM-dd').format(dayDate);
+            final prevStr = DateFormat('yyyy-MM-dd')
+                .format(dayDate.subtract(const Duration(days: 1)));
+            final lineColor = goalColor(
+              currentTrend: trendMap[todayStr],
+              previousTrend: trendMap[prevStr],
+              goal: goal,
+              isDark: isDark,
+            );
+            dropLineBars.add(LineChartBarData(
+              spots: [FlSpot(ws.x, trendY), FlSpot(ws.x, ws.y)],
+              isCurved: false,
+              color: lineColor.withValues(alpha: 0.8),
+              barWidth: 1.5,
+              dotData: const FlDotData(show: false),
+              belowBarData: BarAreaData(show: false),
+            ));
+          }
 
           final rateText = _rateText(trendMap, prefix, useLbs, unit);
 
           final allY = [
             ...weightSpots.map((s) => s.y),
-            ...trendSpots.map((s) => s.y),
+            ...trendSegments.expand((s) => s).map((s) => s.y),
           ];
-          final lastDay =
-              DateTime(_currentMonth.year, _currentMonth.month + 1, 0).day;
 
           return Column(
             children: [
               MonthHeader(
-                month: _currentMonth,
+                month: current,
                 onPrev: _prevMonth,
                 onNext: _isCurrentMonth ? null : _nextMonth,
+                onTap: () => showMonthYearPicker(
+                  context,
+                  current,
+                  (dt) => monthNotifier.value = dt,
+                ),
               ),
               if (rateText != null)
                 Padding(
@@ -112,7 +192,7 @@ class _GraphScreenState extends State<GraphScreen> {
                           textAlign: TextAlign.center,
                         ),
                       )
-                    : weightSpots.isEmpty && trendSpots.isEmpty
+                    : weightSpots.isEmpty && trendSegments.isEmpty
                         ? const Center(child: Text('No data for this month.'))
                         : Padding(
                             padding: const EdgeInsets.fromLTRB(8, 24, 24, 8),
@@ -136,9 +216,11 @@ class _GraphScreenState extends State<GraphScreen> {
                                 borderData: FlBorderData(show: false),
                                 titlesData: FlTitlesData(
                                   topTitles: const AxisTitles(
-                                      sideTitles: SideTitles(showTitles: false)),
+                                      sideTitles:
+                                          SideTitles(showTitles: false)),
                                   rightTitles: const AxisTitles(
-                                      sideTitles: SideTitles(showTitles: false)),
+                                      sideTitles:
+                                          SideTitles(showTitles: false)),
                                   leftTitles: AxisTitles(
                                     sideTitles: SideTitles(
                                       showTitles: true,
@@ -149,7 +231,7 @@ class _GraphScreenState extends State<GraphScreen> {
                                           return const SizedBox.shrink();
                                         }
                                         return Text(
-                                          '${value.toStringAsFixed(1)}',
+                                          value.toStringAsFixed(1),
                                           style: Theme.of(context)
                                               .textTheme
                                               .labelSmall,
@@ -171,13 +253,24 @@ class _GraphScreenState extends State<GraphScreen> {
                                   ),
                                 ),
                                 lineTouchData: LineTouchData(
+                                  getTouchedSpotIndicator:
+                                      (barData, spotIndexes) {
+                                    // No tap indicator dots/lines on any bar —
+                                    // the tooltip bubble is enough on Android.
+                                    return spotIndexes
+                                        .map((_) => null)
+                                        .toList();
+                                  },
                                   touchTooltipData: LineTouchTooltipData(
                                     getTooltipColor: (_) => Theme.of(context)
                                         .colorScheme
                                         .surfaceContainerHighest,
                                     getTooltipItems: (spots) =>
                                         spots.map((spot) {
-                                      final isTrend = spot.barIndex == 0;
+                                      // Layout: 0..numTrendBars-1 = trend segments,
+                                      // numTrendBars = weight, beyond = drop lines.
+                                      if (spot.barIndex > numTrendBars) return null;
+                                      final isTrend = spot.barIndex < numTrendBars;
                                       return LineTooltipItem(
                                         '${isTrend ? 'Trend' : 'Weight'}: '
                                         '${spot.y.toStringAsFixed(1)} $unit',
@@ -193,20 +286,14 @@ class _GraphScreenState extends State<GraphScreen> {
                                   ),
                                 ),
                                 lineBarsData: [
-                                  LineChartBarData(
-                                    spots: trendSpots,
-                                    isCurved: true,
-                                    curveSmoothness: 0.25,
-                                    color: trendColor,
-                                    barWidth: 2.5,
-                                    dotData: const FlDotData(show: false),
-                                    belowBarData: BarAreaData(show: false),
-                                  ),
+                                  // 0..numTrendBars-1: trend segments
+                                  ...trendBars,
+                                  // numTrendBars: weight dots — no connecting line
                                   LineChartBarData(
                                     spots: weightSpots,
                                     isCurved: false,
                                     color: weightColor,
-                                    barWidth: 1.5,
+                                    barWidth: 0,
                                     dotData: FlDotData(
                                       show: true,
                                       getDotPainter: (_, __, ___, ____) =>
@@ -221,6 +308,8 @@ class _GraphScreenState extends State<GraphScreen> {
                                     ),
                                     belowBarData: BarAreaData(show: false),
                                   ),
+                                  // numTrendBars+1+: vertical sticks
+                                  ...dropLineBars,
                                 ],
                               ),
                             ),
@@ -230,6 +319,7 @@ class _GraphScreenState extends State<GraphScreen> {
             ],
           );
         },
+        ),
       ),
     );
   }
@@ -237,8 +327,6 @@ class _GraphScreenState extends State<GraphScreen> {
 
 double _convert(double kg, bool useLbs) => useLbs ? kg * 2.20462 : kg;
 
-// Returns a human-readable summary of how the trend moved this month.
-// Returns null if there are fewer than 2 trend points in the month.
 String? _rateText(
     Map<String, double> trendMap, String prefix, bool useLbs, String unit) {
   final monthTrend = trendMap.entries

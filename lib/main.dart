@@ -6,17 +6,26 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart' as sqflite;
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'src/app_colors.dart';
 import 'pages/table_screen.dart';
 import 'pages/graph_screen.dart';
 import 'pages/settings_screen.dart';
 import 'database/database.dart';
 
+enum WeightGoal { lose, maintain, gain }
+
 // Global notifiers so any widget can read or change app-wide preferences
 // without needing to pass callbacks all the way down the widget tree.
-final themeNotifier = ValueNotifier<ThemeMode>(ThemeMode.light);
+final themeNotifier = ValueNotifier<ThemeMode>(ThemeMode.system);
 // true = display weights in lbs; false = kg (storage is always kg).
 final useLbsNotifier = ValueNotifier<bool>(false);
+// Goal drives the trend coloring: Lose/Maintain/Gain.
+final goalNotifier = ValueNotifier<WeightGoal>(WeightGoal.lose);
+// Shared month shown in both table and graph — keeps them in sync across tabs.
+final monthNotifier = ValueNotifier<DateTime>(
+  DateTime(DateTime.now().year, DateTime.now().month),
+);
 
 void main() {
   runZonedGuarded(_startup, _showCrashScreen);
@@ -29,14 +38,34 @@ Future<void> _startup() async {
     _showCrashScreen(details.exception, details.stack ?? StackTrace.empty);
   };
 
+  // On desktop platforms (Linux, Windows, macOS) sqflite needs the FFI
+  // backend because there is no platform channel to the OS's built-in SQLite.
+  // sqfliteFfiInit() loads the system libsqlite3 and sets databaseFactory to
+  // databaseFactoryFfi so that all subsequent openDatabase() calls go through FFI.
+  if (!kIsWeb && (Platform.isLinux || Platform.isWindows || Platform.isMacOS)) {
+    sqfliteFfiInit();
+    databaseFactory = databaseFactoryFfi;
+  }
+
   // One-shot migration: move the database from the old NativeDatabase path
   // (getApplicationSupportDirectory) to the new sqflite path (getDatabasesPath).
   // Silent — a fresh empty database is created if anything goes wrong.
   await _migrateLegacyDatabase();
 
   final prefs = await SharedPreferences.getInstance();
-  final isDark = prefs.getBool('darkMode') ?? false;
-  themeNotifier.value = isDark ? ThemeMode.dark : ThemeMode.light;
+  // Migrate old 'darkMode' bool to new 'theme' string key.
+  final themeStr = prefs.getString('theme') ??
+      (prefs.getBool('darkMode') == true ? 'dark' : 'system');
+  themeNotifier.value = switch (themeStr) {
+    'light' => ThemeMode.light,
+    'dark' => ThemeMode.dark,
+    _ => ThemeMode.system,
+  };
+  goalNotifier.value = switch (prefs.getString('goal') ?? 'lose') {
+    'maintain' => WeightGoal.maintain,
+    'gain' => WeightGoal.gain,
+    _ => WeightGoal.lose,
+  };
   useLbsNotifier.value = prefs.getBool('useLbs') ?? false;
   if (kDebugMode) await db.seedDummyData();
   runApp(const MainApp());
@@ -58,6 +87,31 @@ Future<void> _migrateLegacyDatabase() async {
   } catch (_) {
     // Best-effort; a clean empty database will be created if this fails.
   }
+}
+
+// Returns the color for a trend value based on whether it is moving toward
+// the user's goal. Compares today's trend value to the previous day's.
+// Returns a neutral orange when either value is missing (first entry, restart).
+Color goalColor({
+  required double? currentTrend,
+  required double? previousTrend,
+  required WeightGoal goal,
+  required bool isDark,
+}) {
+  // Neutral = orange (the EMA trend line colour). Used when there is no
+  // comparison possible, when the trend is flat, or for the Maintain goal.
+  final neutral = isDark ? Colors.orange[300]! : Colors.deepOrange;
+  if (currentTrend == null || previousTrend == null) return neutral;
+  if (goal == WeightGoal.maintain) return neutral;
+  final delta = currentTrend - previousTrend;
+  if (delta.abs() < 0.01) return neutral;
+  final good = isDark ? Colors.green[300]! : Colors.green[700]!;
+  final bad = isDark ? Colors.red[300]! : Colors.red[700]!;
+  return switch (goal) {
+    WeightGoal.lose => delta < 0 ? good : bad,
+    WeightGoal.gain => delta > 0 ? good : bad,
+    WeightGoal.maintain => neutral,
+  };
 }
 
 // Catches any unhandled Dart exception and shows it on screen so we can
