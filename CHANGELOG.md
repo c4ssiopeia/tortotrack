@@ -15,6 +15,83 @@ Versioning follows [Semantic Versioning](https://semver.org/): MAJOR.MINOR.PATCH
 
 ---
 
+## [0.5.4] - 2026-07-18
+
+### Fixed
+- **Sharing the CSV directly to Nextcloud produced an empty file.** Root
+  cause (confirmed against Android's own SAF documentation and the
+  `file_picker` issue tracker): `file_picker`'s "Save As" write happens
+  synchronously on the app's main thread, which is fine for local storage
+  but unreliable once the other end of that write is a network upload —
+  Android can cut it short with no error. Added a separate **Share CSV**
+  option that hands the file to another app via Android's standard share
+  mechanism (`share_plus`) instead, which is built for exactly this and
+  doesn't have the problem. "Export as CSV" (Save As, for local folders)
+  is unchanged and still works as before.
+
+### Changed
+- **Number format setting redesigned** — the decimal-separator toggle used
+  to show only "90.00" / "90,00" as button labels, which wasn't clear on
+  its own. Now the buttons are labelled "Dot" / "Comma" with a live
+  "Example: 90.00 kg" preview underneath.
+
+---
+
+## [0.5.3] - 2026-07-18
+
+### Fixed
+- **Weights now consistently show 2 decimal places everywhere** — table
+  entries, trend labels, interpolated estimates, the edit-entry dialog, and
+  the graph (axis labels, tooltip, monthly change summary). Previously most
+  of these rounded to 1 decimal, including the box shown when reopening an
+  existing entry — which meant re-saving an entry silently dropped its
+  second decimal digit. That's what caused the "second decimal disappears"
+  and the empty-looking export: not the export code, a display bug that fed
+  back into what got saved.
+
+### Added
+- **Settings → Number format**: choose whether numbers display with a dot
+  (`90.00`) or a comma (`90,00`). Display only — CSV export always uses a
+  dot so exported files stay readable by Import and other tools.
+
+---
+
+## [0.5.2] - 2026-07-18
+
+### Fixed
+- **CSV export could save an empty file** when sharing directly to a
+  cloud-backed destination (e.g. Nextcloud) instead of local storage. Root
+  cause: the `file_picker` library's Android code didn't reliably close the
+  output stream on every path, so some document providers never received the
+  written bytes. Fixed by updating `file_picker` (8.3.7 → 10.3.10), whose
+  rewritten Android implementation guarantees the stream is closed correctly.
+
+### Changed
+- **Release signing** — release APKs were being signed with Flutter's local
+  debug key (a per-machine key never meant for distribution), which made
+  Android treat every new build as coming from an unknown source and refuse
+  in-place updates. Added a dedicated, permanent release keystore (stored
+  outside the repo) so every future release shares one signature and
+  installs as a normal update. Note: this specific build still requires one
+  manual uninstall since the signing key changed — every release after this
+  one updates in place.
+
+---
+
+## [0.5.1] - 2026-07-18
+
+### Fixed
+- **CSV export now lets you choose where to save** — previously the file was
+  written silently into the app's private storage folder, which isn't visible
+  in a normal file manager. Export now opens a native "Save As" dialog (via
+  `file_picker`) so you pick the folder and filename yourself, same as Import
+  already worked.
+- **Table: interpolated estimate now shows two decimal places** (`~X.XX kg`)
+  instead of one, to distinguish it more clearly from real entered weights
+  (which stay at one decimal, matching what a scale reports).
+
+---
+
 ## [0.5.0] - 2026-07-01
 
 ### Added

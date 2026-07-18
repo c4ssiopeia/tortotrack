@@ -4,11 +4,7 @@ import '../database/database.dart';
 import '../database/weight_entry.dart';
 import '../main.dart';
 import '../src/month_header.dart';
-
-String _formatWeight(double kg, bool useLbs) {
-  if (useLbs) return '${(kg * 2.20462).toStringAsFixed(1)} lbs';
-  return '${kg.toStringAsFixed(1)} kg';
-}
+import '../src/number_format.dart';
 
 String _unitLabel(bool useLbs) => useLbs ? 'lbs' : 'kg';
 
@@ -103,7 +99,7 @@ class _TableScreenState extends State<TableScreen> {
       final display = useLbs
           ? existingWeightKg * 2.20462
           : existingWeightKg;
-      _weightController.text = display.toStringAsFixed(1);
+      _weightController.text = formatNumber(display);
     } else {
       _weightController.clear();
     }
@@ -151,7 +147,10 @@ class _TableScreenState extends State<TableScreen> {
       valueListenable: goalNotifier,
       builder: (context, goal, _) => ValueListenableBuilder<bool>(
         valueListenable: useLbsNotifier,
-        builder: (context, useLbs, _) => _buildBody(context, useLbs, goal),
+        builder: (context, useLbs, _) => ValueListenableBuilder<DecimalSeparator>(
+          valueListenable: decimalSeparatorNotifier,
+          builder: (context, _, _) => _buildBody(context, useLbs, goal),
+        ),
       ),
     );
   }
@@ -266,7 +265,7 @@ class _TableScreenState extends State<TableScreen> {
                               if (trendKg != null) ...[
                                 const Spacer(),
                                 Text(
-                                  'trend ${_formatWeight(trendKg, useLbs)}',
+                                  'trend ${formatWeight(trendKg, useLbs)}',
                                   style: TextStyle(
                                     color: trendDisplayColor,
                                     fontSize: 12,
@@ -276,7 +275,7 @@ class _TableScreenState extends State<TableScreen> {
                             ],
                           ),
                           trailing: Text(
-                            _formatWeight(weight, useLbs),
+                            formatWeight(weight, useLbs),
                             style: Theme.of(context).textTheme.titleMedium,
                           ),
                           onTap: () => _showDialog(context, day, weight),
@@ -303,7 +302,7 @@ class _TableScreenState extends State<TableScreen> {
                           if (estimateKg != null && !isFuture) ...[
                             const Spacer(),
                             Text(
-                              '~${_formatWeight(estimateKg, useLbs)}',
+                              '~${formatWeight(estimateKg, useLbs)}',
                               style: TextStyle(
                                 color: trendColor,
                                 fontSize: 12,

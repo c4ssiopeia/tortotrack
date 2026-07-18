@@ -5,6 +5,7 @@ import '../database/database.dart';
 import '../database/weight_entry.dart';
 import '../main.dart';
 import '../src/month_header.dart';
+import '../src/number_format.dart';
 
 class GraphScreen extends StatefulWidget {
   const GraphScreen({super.key});
@@ -56,7 +57,9 @@ class _GraphScreenState extends State<GraphScreen> {
       valueListenable: goalNotifier,
       builder: (context, goal, _) => ValueListenableBuilder<bool>(
         valueListenable: useLbsNotifier,
-        builder: (context, useLbs, _) => StreamBuilder<List<WeightEntry>>(
+        builder: (context, useLbs, _) => ValueListenableBuilder<DecimalSeparator>(
+          valueListenable: decimalSeparatorNotifier,
+          builder: (context, _, _) => StreamBuilder<List<WeightEntry>>(
         stream: db.watchAllEntries(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
@@ -231,7 +234,7 @@ class _GraphScreenState extends State<GraphScreen> {
                                           return const SizedBox.shrink();
                                         }
                                         return Text(
-                                          value.toStringAsFixed(1),
+                                          formatNumber(value),
                                           style: Theme.of(context)
                                               .textTheme
                                               .labelSmall,
@@ -273,7 +276,7 @@ class _GraphScreenState extends State<GraphScreen> {
                                       final isTrend = spot.barIndex < numTrendBars;
                                       return LineTooltipItem(
                                         '${isTrend ? 'Trend' : 'Weight'}: '
-                                        '${spot.y.toStringAsFixed(1)} $unit',
+                                        '${formatNumber(spot.y)} $unit',
                                         TextStyle(
                                           color: isTrend
                                               ? trendColor
@@ -320,6 +323,7 @@ class _GraphScreenState extends State<GraphScreen> {
           );
         },
         ),
+        ),
       ),
     );
   }
@@ -348,8 +352,8 @@ String? _rateText(
   final sign = totalChange >= 0 ? '+' : '';
   final signW = perWeek >= 0 ? '+' : '';
 
-  return 'This month: $sign${totalChange.toStringAsFixed(1)} $unit  '
-      '($signW${perWeek.toStringAsFixed(2)} $unit/week)';
+  return 'This month: $sign${formatNumber(totalChange)} $unit  '
+      '($signW${formatNumber(perWeek)} $unit/week)';
 }
 
 class _Legend extends StatelessWidget {

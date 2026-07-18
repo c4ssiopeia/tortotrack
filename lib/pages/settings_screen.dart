@@ -1,9 +1,12 @@
+import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../main.dart';
 import '../database/database.dart';
@@ -57,6 +60,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     goalNotifier.value = goal;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('goal', goal.name);
+  }
+
+  Future<void> _setDecimalSeparator(DecimalSeparator separator) async {
+    decimalSeparatorNotifier.value = separator;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('decimalSeparator', separator.name);
   }
 
   @override
@@ -141,6 +150,44 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
         ),
         const Divider(),
+        _SectionHeader('Number format'),
+        ValueListenableBuilder<DecimalSeparator>(
+          valueListenable: decimalSeparatorNotifier,
+          builder: (_, separator, _) => Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Decimal separator'),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: SegmentedButton<DecimalSeparator>(
+                    showSelectedIcon: false,
+                    segments: const [
+                      ButtonSegment(
+                        value: DecimalSeparator.dot,
+                        label: Text('Dot'),
+                      ),
+                      ButtonSegment(
+                        value: DecimalSeparator.comma,
+                        label: Text('Comma'),
+                      ),
+                    ],
+                    selected: {separator},
+                    onSelectionChanged: (s) => _setDecimalSeparator(s.first),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Example: ${separator == DecimalSeparator.dot ? '90.00 kg' : '90,00 kg'}',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            ),
+          ),
+        ),
+        const Divider(),
         _SectionHeader('Export & Import'),
         // Export format toggle
         Padding(
@@ -173,10 +220,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
           title: const Text('Export as CSV'),
           subtitle: Text(
             _exportFormat == _ExportFormat.simple
-                ? 'Simple format — date, weight in kg'
-                : 'Fourmilab Hacker\'s Diet format',
+                ? 'Simple format — date, weight in kg. Choose a local folder.'
+                : 'Fourmilab Hacker\'s Diet format. Choose a local folder.',
           ),
           onTap: () => _exportCsv(context),
+        ),
+        ListTile(
+          leading: const Icon(Icons.share_outlined),
+          title: const Text('Share CSV'),
+          subtitle: const Text(
+            'Send to another app — Nextcloud, email, etc.',
+          ),
+          onTap: () => _shareCsv(context),
         ),
         ListTile(
           leading: const Icon(Icons.upload_file_outlined),
@@ -211,7 +266,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Future<void> _exportCsv(BuildContext context) async {
+  // Builds the CSV bytes + filename for the currently selected export
+  // format, or null (after showing a snackbar) if there's nothing to export.
+  Future<({Uint8List bytes, String fileName})?> _prepareExport(
+      BuildContext context) async {
     final entries = await db.getAllEntries();
     if (entries.isEmpty) {
       if (context.mounted) {
@@ -219,27 +277,72 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SnackBar(content: Text('No data to export.')),
         );
       }
-      return;
+      return null;
     }
 
     final csv = _exportFormat == _ExportFormat.simple
         ? buildSimpleCsv(entries)
         : buildFourmilabCsv(entries);
+    final bytes = Uint8List.fromList(utf8.encode(csv));
 
     final formatTag = _exportFormat == _ExportFormat.simple ? 'simple' : 'fourmilab';
-    final dir = await getApplicationDocumentsDirectory();
     final timestamp = DateFormat('yyyyMMdd_HHmmss').format(DateTime.now());
-    final file = File(p.join(dir.path, 'tortotrack_${formatTag}_$timestamp.csv'));
-    await file.writeAsString(csv);
+    final fileName = 'tortotrack_${formatTag}_$timestamp.csv';
+    return (bytes: bytes, fileName: fileName);
+  }
+
+  Future<void> _exportCsv(BuildContext context) async {
+    final prepared = await _prepareExport(context);
+    if (prepared == null) return;
+    final (:bytes, :fileName) = prepared;
+
+    final outputPath = await FilePicker.platform.saveFile(
+      dialogTitle: 'Export weight data as CSV',
+      fileName: fileName,
+      type: FileType.custom,
+      allowedExtensions: ['csv'],
+      bytes: bytes,
+    );
+
+    if (outputPath == null) return; // user cancelled the dialog
+
+    // On Android/iOS the plugin writes the file itself from `bytes` via the
+    // system's Storage Access Framework. On desktop it only returns the
+    // chosen path and leaves writing the file to us.
+    if (!Platform.isAndroid && !Platform.isIOS) {
+      await File(outputPath).writeAsBytes(bytes);
+    }
 
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Saved to ${file.path}'),
+          content: Text('Saved to $outputPath'),
           duration: const Duration(seconds: 6),
         ),
       );
     }
+  }
+
+  // Hands the CSV to another app (Nextcloud, email, etc.) via the OS share
+  // sheet instead of the SAF "Save As" dialog. This matters specifically for
+  // cloud-backed destinations: file_picker's saveFile() writes bytes
+  // synchronously on the UI thread, which is unreliable once the other end
+  // of that write is a network upload (Android can cut it short, leaving an
+  // empty file, with no error). Sharing hands the file to the receiving app
+  // instead, which uploads it on its own terms — the standard Android way
+  // to pass a file to another app.
+  Future<void> _shareCsv(BuildContext context) async {
+    final prepared = await _prepareExport(context);
+    if (prepared == null) return;
+    final (:bytes, :fileName) = prepared;
+
+    final tempDir = await getTemporaryDirectory();
+    final file = File(p.join(tempDir.path, fileName));
+    await file.writeAsBytes(bytes);
+
+    await SharePlus.instance.share(
+      ShareParams(files: [XFile(file.path, mimeType: 'text/csv')]),
+    );
   }
 
   Future<void> _importCsv(BuildContext context) async {

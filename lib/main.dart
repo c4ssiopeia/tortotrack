@@ -15,6 +15,10 @@ import 'database/database.dart';
 
 enum WeightGoal { lose, maintain, gain }
 
+// Display-only: which character separates the whole and fractional part of
+// a number on screen. CSV export always uses '.' regardless of this setting.
+enum DecimalSeparator { dot, comma }
+
 // Global notifiers so any widget can read or change app-wide preferences
 // without needing to pass callbacks all the way down the widget tree.
 final themeNotifier = ValueNotifier<ThemeMode>(ThemeMode.system);
@@ -22,6 +26,9 @@ final themeNotifier = ValueNotifier<ThemeMode>(ThemeMode.system);
 final useLbsNotifier = ValueNotifier<bool>(false);
 // Goal drives the trend coloring: Lose/Maintain/Gain.
 final goalNotifier = ValueNotifier<WeightGoal>(WeightGoal.lose);
+// Decimal separator used when displaying numbers: '90.00' vs '90,00'.
+final decimalSeparatorNotifier =
+    ValueNotifier<DecimalSeparator>(DecimalSeparator.dot);
 // Shared month shown in both table and graph — keeps them in sync across tabs.
 final monthNotifier = ValueNotifier<DateTime>(
   DateTime(DateTime.now().year, DateTime.now().month),
@@ -67,6 +74,11 @@ Future<void> _startup() async {
     _ => WeightGoal.lose,
   };
   useLbsNotifier.value = prefs.getBool('useLbs') ?? false;
+  decimalSeparatorNotifier.value =
+      switch (prefs.getString('decimalSeparator') ?? 'dot') {
+    'comma' => DecimalSeparator.comma,
+    _ => DecimalSeparator.dot,
+  };
   if (kDebugMode) await db.seedDummyData();
   runApp(const MainApp());
 }

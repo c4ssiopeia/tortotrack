@@ -1,7 +1,7 @@
 name: tortotrack
 description: "Weight tracking app with Hacker's Diet trend line."
 publish_to: 'none'
-version: 0.5.0+7
+version: 0.5.4+11
 
 environment:
   sdk: ^3.11.1
@@ -24,8 +24,9 @@ dependencies:
   fl_chart: ^0.70.0
 
   # Export / Import
-  file_picker: ^8.0.0
+  file_picker: ^10.3.10
   sqflite_common_ffi: ^2.3.0
+  share_plus: ^12.0.2
 
 dev_dependencies:
   flutter_test:
